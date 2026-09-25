@@ -18,7 +18,9 @@ export const auditApi = {
     api.post('/audit/upload', formData, {
       headers: {
         Authorization: `Bearer ${token}`,
-        'Content-Type': 'multipart/form-data',
+        // Content-Type intentionally omitted — the browser must set this
+        // itself for FormData requests, including the multipart boundary.
+        // Setting it manually breaks multer's parsing on the backend.
       },
     }),
 
@@ -55,4 +57,4 @@ export const paymentApi = {
     ),
 }
 
-export default api 
+export default api

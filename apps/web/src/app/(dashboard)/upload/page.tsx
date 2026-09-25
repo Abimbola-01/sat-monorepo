@@ -2,6 +2,7 @@
 import { useState, useCallback } from 'react'
 import { useDropzone } from 'react-dropzone'
 import { useRouter } from 'next/navigation'
+import { useAuth } from '@clerk/nextjs'
 import {
   Upload,
   FileText,
@@ -13,6 +14,7 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
+import { auditApi } from '@/lib/api'
 
 type Stage = 'idle' | 'uploading' | 'analyzing' | 'complete' | 'error'
 
@@ -23,8 +25,14 @@ const ACCEPTED_TYPES = {
 
 const MAX_SIZE = 10 * 1024 * 1024 // 10MB
 
+interface UploadResponse {
+  auditId: string
+  message: string
+}
+
 export default function UploadPage() {
   const router = useRouter()
+  const { getToken } = useAuth()
   const [stage, setStage] = useState<Stage>('idle')
   const [file, setFile] = useState<File | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -66,26 +74,38 @@ export default function UploadPage() {
     if (!file) return
 
     try {
-      // Stage 1 — uploading
       setStage('uploading')
-      await new Promise((r) => setTimeout(r, 1500)) // simulated
 
-      // Stage 2 — analyzing
+      const token = await getToken()
+      if (!token) {
+        throw new Error('You must be signed in to upload a statement.')
+      }
+
+      // Field name must match the backend's multer config exactly:
+      // upload.single('statement') in apps/api/src/routes/audit.ts
+      const formData = new FormData()
+      formData.append('statement', file)
+
+      const res = await auditApi.uploadStatement(formData, token)
+      const { auditId } = res.data as UploadResponse
+
+      // Backend returns 202 immediately and processes in the background —
+      // there's no "analyzing" step to await here, just a transition to
+      // let the user know it's underway before we redirect them to the
+      // audit page, which polls until it's actually complete.
       setStage('analyzing')
-      await new Promise((r) => setTimeout(r, 3000)) // simulated
+      toast.success('Statement uploaded. Analysis started.')
 
-      // Stage 3 — complete
       setStage('complete')
-      toast.success('Audit complete! Redirecting to your results...')
-
       setTimeout(() => {
-        router.push('/dashboard')
-      }, 2000)
-
+        router.push(`/audit/${auditId}`)
+      }, 1200)
     } catch (err) {
       setStage('error')
-      setError('Something went wrong. Please try again.')
-      toast.error('Upload failed. Please try again.')
+      const message =
+        err instanceof Error ? err.message : 'Something went wrong. Please try again.'
+      setError(message)
+      toast.error(message)
     }
   }
 
@@ -99,10 +119,10 @@ export default function UploadPage() {
           </div>
           <div>
             <h2 className="font-display text-3xl font-bold text-white mb-2">
-              Audit complete!
+              Upload received!
             </h2>
             <p className="text-gray-400">
-              Taking you to your results...
+              Taking you to your audit...
             </p>
           </div>
           <Loader2 size={20} className="animate-spin text-emerald-400" />
@@ -120,7 +140,7 @@ export default function UploadPage() {
           New Audit
         </h1>
         <p className="text-gray-400 mt-1">
-          Upload your bank statement and we'll find every subscription in under 60 seconds.
+          Upload your bank statement and we&apos;ll find every subscription in under 60 seconds.
         </p>
       </div>
 
@@ -160,7 +180,6 @@ export default function UploadPage() {
         <input {...getInputProps()} />
 
         {file ? (
-          // File selected state
           <div className="flex flex-col items-center gap-4">
             <div className="w-16 h-16 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center">
               <FileText size={32} className="text-emerald-400" />
@@ -184,7 +203,6 @@ export default function UploadPage() {
             </button>
           </div>
         ) : isDragActive ? (
-          // Drag active state
           <div className="flex flex-col items-center gap-3">
             <div className="w-16 h-16 rounded-2xl bg-emerald-500/20 flex items-center justify-center">
               <Upload size={32} className="text-emerald-400 animate-bounce" />
@@ -194,7 +212,6 @@ export default function UploadPage() {
             </p>
           </div>
         ) : (
-          // Default empty state
           <div className="flex flex-col items-center gap-4">
             <div className="w-16 h-16 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center">
               <Upload size={32} className="text-gray-500" />
@@ -249,11 +266,10 @@ export default function UploadPage() {
             <span className="text-gray-300 font-medium">
               {stage === 'uploading'
                 ? 'Uploading securely...'
-                : 'AI analyzing your transactions...'}
+                : 'Starting AI analysis...'}
             </span>
           </div>
 
-          {/* Progress bar */}
           <div className="w-full bg-white/5 rounded-full h-1.5 overflow-hidden">
             <div
               className={cn(
@@ -266,7 +282,7 @@ export default function UploadPage() {
           <p className="text-center text-gray-600 text-xs">
             {stage === 'uploading'
               ? 'Encrypting and uploading your file...'
-              : 'Reading transactions and identifying subscriptions...'}
+              : 'Your audit will keep processing in the background — you can watch it finish on the next screen.'}
           </p>
         </div>
       )}
