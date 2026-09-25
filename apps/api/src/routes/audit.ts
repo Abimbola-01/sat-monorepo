@@ -7,6 +7,13 @@ import { requireAuth, AuthRequest } from '../middleware/auth'
 import { extractTextFromFile } from '../services/pdfParser'
 import { analyzeTransactions } from '../services/openai'
 import { pool, supabase } from '../config/database'
+import {
+  mapAuditRow,
+  mapSubscriptionRow,
+  type AuditRow,
+  type SubscriptionRow,
+  type MappedSubscription,
+} from '../utils/mappers'
 
 const router = Router()
 
@@ -48,7 +55,6 @@ router.post(
       return res.status(400).json({ message: 'No file uploaded' })
     }
 
-    // Create audit record immediately with "processing" status
     let auditId: string
 
     try {
@@ -60,17 +66,15 @@ router.post(
       )
       auditId = result.rows[0].id
 
-      // Return the audit ID immediately so frontend can start polling
       res.status(202).json({
         auditId,
         message: 'File uploaded. Analysis started.',
       })
     } catch (error) {
-      fs.unlinkSync(file.path) // clean up file
+      fs.unlinkSync(file.path)
       return res.status(500).json({ message: 'Failed to create audit record' })
     }
 
-    // Process in background (don't await — response already sent)
     processAudit(auditId, file, req.userId!).catch(async (error) => {
       console.error('Audit processing failed:', error)
       await pool.query(
@@ -81,19 +85,16 @@ router.post(
   }
 )
 
-// Background processing function
 async function processAudit(
   auditId: string,
   file: Express.Multer.File,
   userId: string
 ) {
   try {
-    // Step 1 — Extract text from file
-    console.log(`📄 Extracting text from ${file.originalname}...`)
+    console.log(`Extracting text from ${file.originalname}...`)
     const text = await extractTextFromFile(file.path, file.mimetype)
 
-    // Step 2 — Upload original file to Supabase Storage
-    console.log(`☁️  Uploading file to storage...`)
+    console.log(`Uploading file to storage...`)
     const fileBuffer = fs.readFileSync(file.path)
     const storageKey = `statements/${userId}/${auditId}/${file.originalname}`
 
@@ -112,12 +113,10 @@ async function processAudit(
       fileUrl = data.publicUrl
     }
 
-    // Step 3 — Send to OpenAI for analysis
-    console.log(`🤖 Analyzing transactions with AI...`)
+    console.log(`Analyzing transactions with AI...`)
     const subscriptions = await analyzeTransactions(text)
-    console.log(`✅ Found ${subscriptions.length} subscriptions`)
+    console.log(`Found ${subscriptions.length} subscriptions`)
 
-    // Step 4 — Calculate totals
     const monthlyAmounts = subscriptions.map((s) => {
       if (s.frequency === 'monthly') return s.amount
       if (s.frequency === 'quarterly') return s.amount / 3
@@ -127,20 +126,16 @@ async function processAudit(
 
     const totalMonthlySpend = monthlyAmounts.reduce((a, b) => a + b, 0)
 
-    // Find duplicates (same name appearing multiple times)
-    const nameCount: Record<string, number> = {}
-    subscriptions.forEach((s) => {
-      nameCount[s.name] = (nameCount[s.name] || 0) + 1
-    })
-    const duplicates = subscriptions.filter((s) => nameCount[s.name] > 1)
-    const potentialSavings = duplicates.reduce((sum, s) => sum + s.amount, 0) / 2
+    // Save subscriptions, capturing their real DB ids — needed to
+    // reference them later in the persisted duplicates JSON.
+    const savedSubscriptions: MappedSubscription[] = []
 
-    // Step 5 — Save subscriptions to database
     for (const sub of subscriptions) {
-      await pool.query(
+      const insertResult = await pool.query(
         `INSERT INTO subscriptions
            (audit_id, user_id, name, amount, currency, frequency, category, last_charged, active)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         RETURNING id, name, amount, currency, frequency, category, last_charged, active`,
         [
           auditId,
           userId,
@@ -153,9 +148,30 @@ async function processAudit(
           sub.active,
         ]
       )
+
+      savedSubscriptions.push(mapSubscriptionRow(insertResult.rows[0] as SubscriptionRow))
     }
 
-    // Step 6 — Update audit record to complete
+    // Group duplicates (same name appearing more than once) using the
+    // saved rows so each entry carries a real database id.
+    const nameGroups = new Map<string, MappedSubscription[]>()
+    for (const sub of savedSubscriptions) {
+      const group = nameGroups.get(sub.name) ?? []
+      group.push(sub)
+      nameGroups.set(sub.name, group)
+    }
+
+    const duplicateGroups = Array.from(nameGroups.values()).filter(
+      (group) => group.length > 1
+    )
+
+    const potentialSavings = duplicateGroups.reduce((sum, group) => {
+      const wasteCount = group.length - 1
+      return sum + group[0].amount * wasteCount
+    }, 0)
+
+    const unusedCount = savedSubscriptions.filter((s) => !s.active).length
+
     await pool.query(
       `UPDATE audits SET
          status = 'complete',
@@ -164,21 +180,24 @@ async function processAudit(
          total_monthly_spend = $3,
          potential_savings = $4,
          unused_count = $5,
+         duplicates = $6,
          updated_at = NOW()
-       WHERE id = $6`,
+       WHERE id = $7`,
       [
         fileUrl,
         subscriptions.length,
         totalMonthlySpend,
         potentialSavings,
-        duplicates.length,
+        unusedCount,
+        JSON.stringify(duplicateGroups),
         auditId,
       ]
     )
 
-    console.log(`🎉 Audit ${auditId} complete!`)
+    console.log(
+      `Audit ${auditId} complete. ${duplicateGroups.length} duplicate group(s) found.`
+    )
   } finally {
-    // Always clean up the local file
     if (fs.existsSync(file.path)) {
       fs.unlinkSync(file.path)
     }
@@ -199,17 +218,19 @@ router.get('/:auditId', requireAuth, async (req: AuthRequest, res: Response) => 
       return res.status(404).json({ message: 'Audit not found' })
     }
 
-    const audit = auditResult.rows[0]
-
-    // Get subscriptions for this audit
     const subsResult = await pool.query(
       'SELECT * FROM subscriptions WHERE audit_id = $1 ORDER BY amount DESC',
       [auditId]
     )
 
+    const mapped = mapAuditRow(
+      auditResult.rows[0] as AuditRow,
+      subsResult.rows as SubscriptionRow[]
+    )
+
     return res.json({
-      ...audit,
-      subscriptions: subsResult.rows,
+      ...mapped,
+      subscriptions: (subsResult.rows as SubscriptionRow[]).map(mapSubscriptionRow),
     })
   } catch (error) {
     console.error('Get audit error:', error)
@@ -228,7 +249,9 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
       [req.userId]
     )
 
-    return res.json(result.rows)
+    const mapped = (result.rows as AuditRow[]).map((row) => mapAuditRow(row, []))
+
+    return res.json(mapped)
   } catch (error) {
     console.error('Get audits error:', error)
     return res.status(500).json({ message: 'Failed to fetch audits' })
@@ -236,7 +259,3 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
 })
 
 export default router
-
-
-
-
