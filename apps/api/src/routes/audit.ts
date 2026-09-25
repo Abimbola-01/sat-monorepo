@@ -6,6 +6,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 import { extractTextFromFile } from '../services/pdfParser'
 import { analyzeTransactions } from '../services/openai'
+import { generateAuditReportPdf } from '../services/reportGenerator'
 import { pool, supabase } from '../config/database'
 import {
   mapAuditRow,
@@ -17,7 +18,6 @@ import {
 
 const router = Router()
 
-// Configure multer for file uploads
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     const uploadDir = 'uploads/'
@@ -126,8 +126,6 @@ async function processAudit(
 
     const totalMonthlySpend = monthlyAmounts.reduce((a, b) => a + b, 0)
 
-    // Save subscriptions, capturing their real DB ids — needed to
-    // reference them later in the persisted duplicates JSON.
     const savedSubscriptions: MappedSubscription[] = []
 
     for (const sub of subscriptions) {
@@ -152,8 +150,6 @@ async function processAudit(
       savedSubscriptions.push(mapSubscriptionRow(insertResult.rows[0] as SubscriptionRow))
     }
 
-    // Group duplicates (same name appearing more than once) using the
-    // saved rows so each entry carries a real database id.
     const nameGroups = new Map<string, MappedSubscription[]>()
     for (const sub of savedSubscriptions) {
       const group = nameGroups.get(sub.name) ?? []
@@ -172,19 +168,60 @@ async function processAudit(
 
     const unusedCount = savedSubscriptions.filter((s) => !s.active).length
 
+    // Generate the PDF report now, once, using the same data that's about
+    // to be saved — then upload it and store its URL alongside the audit.
+    let reportUrl: string | null = null
+    try {
+      const pdfBuffer = await generateAuditReportPdf(
+        {
+          id: auditId,
+          userId,
+          createdAt: new Date().toISOString(),
+          totalSubscriptions: subscriptions.length,
+          totalMonthlySpend,
+          potentialSavings,
+          duplicates: duplicateGroups,
+          unusedCount,
+          status: 'complete',
+        },
+        savedSubscriptions
+      )
+
+      const reportStorageKey = `reports/${userId}/${auditId}.pdf`
+      const { error: reportUploadError } = await supabase.storage
+        .from('reports')
+        .upload(reportStorageKey, pdfBuffer, {
+          contentType: 'application/pdf',
+          upsert: true,
+        })
+
+      if (!reportUploadError) {
+        const { data } = supabase.storage.from('reports').getPublicUrl(reportStorageKey)
+        reportUrl = data.publicUrl
+      } else {
+        console.error('Report upload failed:', reportUploadError)
+      }
+    } catch (reportError) {
+      // Report generation failure should not fail the whole audit —
+      // the subscription data is still valid and useful without a PDF.
+      console.error('Report generation failed:', reportError)
+    }
+
     await pool.query(
       `UPDATE audits SET
          status = 'complete',
          file_url = $1,
-         total_subscriptions = $2,
-         total_monthly_spend = $3,
-         potential_savings = $4,
-         unused_count = $5,
-         duplicates = $6,
+         report_url = $2,
+         total_subscriptions = $3,
+         total_monthly_spend = $4,
+         potential_savings = $5,
+         unused_count = $6,
+         duplicates = $7,
          updated_at = NOW()
-       WHERE id = $7`,
+       WHERE id = $8`,
       [
         fileUrl,
+        reportUrl,
         subscriptions.length,
         totalMonthlySpend,
         potentialSavings,
@@ -195,7 +232,7 @@ async function processAudit(
     )
 
     console.log(
-      `Audit ${auditId} complete. ${duplicateGroups.length} duplicate group(s) found.`
+      `Audit ${auditId} complete. ${duplicateGroups.length} duplicate group(s) found. Report: ${reportUrl ? 'generated' : 'failed'}.`
     )
   } finally {
     if (fs.existsSync(file.path)) {

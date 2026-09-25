@@ -5,9 +5,9 @@ import helmet from 'helmet'
 import morgan from 'morgan'
 import { connectDB } from './config/database'
 import auditRouter from './routes/audit'
+import reportRouter from './routes/report'
 import { pool } from './config/database'
 import { requireAuth, AuthRequest } from './middleware/auth'
-
 
 const app = express()
 const PORT = process.env.PORT || 4000
@@ -42,6 +42,7 @@ app.get('/health/db', async (req, res) => {
 
 // ── Routes ────────────────────────────────────────────────
 app.use('/api/audit', auditRouter)
+app.use('/api/report', reportRouter)
 
 app.get('/api/me', requireAuth, (req: AuthRequest, res) => {
   res.json({ userId: req.userId, clerkId: req.clerkId })
@@ -64,12 +65,9 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 async function start() {
   await connectDB()
   app.listen(PORT, () => {
-    console.log(`🚀 SAT Backend running on http://localhost:${PORT}`)
-    console.log(`📋 Health check: http://localhost:${PORT}/health`)
+    console.log(`SAT Backend running on http://localhost:${PORT}`)
+    console.log(`Health check: http://localhost:${PORT}/health`)
   })
 }
 
 start()
-
-// ... your existing app setup ...
-

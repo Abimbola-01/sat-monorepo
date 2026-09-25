@@ -56,6 +56,10 @@ export interface AuditRow {
   duplicates: unknown
   unused_count: number | null
   file_url: string | null
+  // The generated PDF report's storage URL — distinct from file_url,
+  // which holds the original uploaded bank statement. Populated by
+  // processAudit() after report generation completes.
+  report_url: string | null
   status: 'processing' | 'complete' | 'failed'
 }
 
@@ -100,7 +104,7 @@ export function mapAuditRow(
     potentialSavings: toNumber(row.potential_savings),
     duplicates: rawDuplicates.map((group) => group.map(mapSubscriptionRow)),
     unusedCount: row.unused_count ?? 0,
-    ...(row.file_url ? { reportUrl: row.file_url } : {}),
+    ...(row.report_url ? { reportUrl: row.report_url } : {}),
     status: row.status,
   }
 }
