@@ -2,7 +2,7 @@ import PDFDocument from 'pdfkit'
 import type { MappedAudit, MappedSubscription } from '../utils/mappers'
 
 const CURRENCY_SYMBOLS: Record<string, string> = {
-  NGN: '₦',
+  NGN: 'NGN ',
   USD: '$',
   GBP: '£',
 }
