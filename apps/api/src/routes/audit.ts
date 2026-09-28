@@ -94,24 +94,9 @@ async function processAudit(
     console.log(`Extracting text from ${file.originalname}...`)
     const text = await extractTextFromFile(file.path, file.mimetype)
 
-    console.log(`Uploading file to storage...`)
-    const fileBuffer = fs.readFileSync(file.path)
-    const storageKey = `statements/${userId}/${auditId}/${file.originalname}`
-
-    const { error: uploadError } = await supabase.storage
-      .from('statements')
-      .upload(storageKey, fileBuffer, {
-        contentType: file.mimetype,
-        upsert: true,
-      })
-
-    let fileUrl = null
-    if (!uploadError) {
-      const { data } = supabase.storage
-        .from('statements')
-        .getPublicUrl(storageKey)
-      fileUrl = data.publicUrl
-    }
+    // The original statement is deliberately never persisted: the only copy
+    // is the temp file on disk, removed in the finally block below. Only the
+    // extracted subscriptions and the generated report are kept.
 
     console.log(`Analyzing transactions with AI...`)
     const subscriptions = await analyzeTransactions(text)
@@ -168,9 +153,9 @@ async function processAudit(
 
     const unusedCount = savedSubscriptions.filter((s) => !s.active).length
 
-    // Generate the PDF report now, once, using the same data that's about
-    // to be saved — then upload it and store its URL alongside the audit.
-    let reportUrl: string | null = null
+    // Generate the PDF once and store it in the PRIVATE "reports" bucket.
+    // Only the storage path is saved; downloads go through the API.
+    let reportPath: string | null = null
     try {
       const pdfBuffer = await generateAuditReportPdf(
         {
@@ -187,7 +172,7 @@ async function processAudit(
         savedSubscriptions
       )
 
-      const reportStorageKey = `reports/${userId}/${auditId}.pdf`
+      const reportStorageKey = `${userId}/${auditId}.pdf`
       const { error: reportUploadError } = await supabase.storage
         .from('reports')
         .upload(reportStorageKey, pdfBuffer, {
@@ -195,33 +180,30 @@ async function processAudit(
           upsert: true,
         })
 
-      if (!reportUploadError) {
-        const { data } = supabase.storage.from('reports').getPublicUrl(reportStorageKey)
-        reportUrl = data.publicUrl
-      } else {
+      if (reportUploadError) {
         console.error('Report upload failed:', reportUploadError)
+      } else {
+        reportPath = reportStorageKey
       }
     } catch (reportError) {
-      // Report generation failure should not fail the whole audit —
-      // the subscription data is still valid and useful without a PDF.
+      // A report failure should not fail the whole audit — the subscription
+      // data is still valid and useful without a PDF.
       console.error('Report generation failed:', reportError)
     }
 
     await pool.query(
       `UPDATE audits SET
          status = 'complete',
-         file_url = $1,
-         report_url = $2,
-         total_subscriptions = $3,
-         total_monthly_spend = $4,
-         potential_savings = $5,
-         unused_count = $6,
-         duplicates = $7,
+         report_path = $1,
+         total_subscriptions = $2,
+         total_monthly_spend = $3,
+         potential_savings = $4,
+         unused_count = $5,
+         duplicates = $6,
          updated_at = NOW()
-       WHERE id = $8`,
+       WHERE id = $7`,
       [
-        fileUrl,
-        reportUrl,
+        reportPath,
         subscriptions.length,
         totalMonthlySpend,
         potentialSavings,
@@ -232,7 +214,7 @@ async function processAudit(
     )
 
     console.log(
-      `Audit ${auditId} complete. ${duplicateGroups.length} duplicate group(s) found. Report: ${reportUrl ? 'generated' : 'failed'}.`
+      `Audit ${auditId} complete. ${duplicateGroups.length} duplicate group(s) found. Report: ${reportPath ? 'generated' : 'failed'}.`
     )
   } finally {
     if (fs.existsSync(file.path)) {

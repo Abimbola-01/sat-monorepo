@@ -55,11 +55,9 @@ export interface AuditRow {
   potential_savings: string | number | null
   duplicates: unknown
   unused_count: number | null
-  file_url: string | null
-  // The generated PDF report's storage URL — distinct from file_url,
-  // which holds the original uploaded bank statement. Populated by
-  // processAudit() after report generation completes.
-  report_url: string | null
+  // Path of the generated PDF inside the private "reports" storage bucket.
+  // Internal only — never returned to the client.
+  report_path: string | null
   status: 'processing' | 'complete' | 'failed'
 }
 
@@ -86,6 +84,9 @@ function toNumber(value: string | number | null): number {
  * `duplicates` is stored as JSONB (already parsed by node-postgres into a
  * plain array of subscription objects, snake_case) — this re-maps each
  * one through mapSubscriptionRow so the response is consistently camelCase.
+ *
+ * `reportUrl` is the authenticated download endpoint, not a storage location:
+ * the bucket is private, so the file can only be fetched through the API.
  */
 export function mapAuditRow(
   row: AuditRow,
@@ -104,7 +105,7 @@ export function mapAuditRow(
     potentialSavings: toNumber(row.potential_savings),
     duplicates: rawDuplicates.map((group) => group.map(mapSubscriptionRow)),
     unusedCount: row.unused_count ?? 0,
-    ...(row.report_url ? { reportUrl: row.report_url } : {}),
+    ...(row.report_path ? { reportUrl: `/api/report/${row.id}/download` } : {}),
     status: row.status,
   }
 }

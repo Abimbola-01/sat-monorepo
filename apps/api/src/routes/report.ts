@@ -1,19 +1,26 @@
 import { Router, Response } from 'express'
 import { requireAuth, AuthRequest } from '../middleware/auth'
-import { pool } from '../config/database'
+import { pool, supabase } from '../config/database'
 
 const router = Router()
 
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 // ── GET /api/report/:reportId/download ────────────────────
-// reportId is the audit's own id — there's no separate "report" entity,
-// the PDF is generated once per audit and its storage URL lives on the
-// audits.report_url column.
+// reportId is the audit's own id — there's no separate "report" entity.
+// The PDF lives in the private "reports" bucket; ownership is checked
+// against the audits table before anything is read from storage.
 router.get('/:reportId/download', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const { reportId } = req.params
 
+    if (!UUID_PATTERN.test(reportId)) {
+      return res.status(404).json({ message: 'Audit not found' })
+    }
+
     const result = await pool.query(
-      'SELECT report_url, file_name, status FROM audits WHERE id = $1 AND user_id = $2',
+      'SELECT report_path, file_name, status FROM audits WHERE id = $1 AND user_id = $2',
       [reportId, req.userId]
     )
 
@@ -21,24 +28,24 @@ router.get('/:reportId/download', requireAuth, async (req: AuthRequest, res: Res
       return res.status(404).json({ message: 'Audit not found' })
     }
 
-    const { report_url: reportUrl, file_name: fileName, status } = result.rows[0]
+    const { report_path: reportPath, file_name: fileName, status } = result.rows[0]
 
     if (status !== 'complete') {
       return res.status(409).json({ message: 'Report is not ready yet' })
     }
 
-    if (!reportUrl) {
+    if (!reportPath) {
       return res.status(404).json({
         message: 'No report was generated for this audit',
       })
     }
 
-    // Fetch the stored PDF server-side and stream it back, rather than
-    // redirecting — keeps the download authenticated through our own API
-    // and gives us control over the response headers (filename, type).
-    const fileResponse = await fetch(reportUrl)
+    const { data, error } = await supabase.storage
+      .from('reports')
+      .download(reportPath)
 
-    if (!fileResponse.ok || !fileResponse.body) {
+    if (error || !data) {
+      console.error('Report download from storage failed:', error)
       return res.status(502).json({ message: 'Failed to retrieve report file' })
     }
 
@@ -50,7 +57,7 @@ router.get('/:reportId/download', requireAuth, async (req: AuthRequest, res: Res
       `attachment; filename="subscription-audit-report-${safeName}.pdf"`
     )
 
-    const buffer = Buffer.from(await fileResponse.arrayBuffer())
+    const buffer = Buffer.from(await data.arrayBuffer())
     return res.send(buffer)
   } catch (error) {
     console.error('Report download error:', error)
