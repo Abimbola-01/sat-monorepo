@@ -1,5 +1,6 @@
 'use client'
-import { useState, useCallback } from 'react'
+
+import { useState, useCallback, useRef } from 'react'
 import { useDropzone } from 'react-dropzone'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@clerk/nextjs'
@@ -11,53 +12,56 @@ import {
   Loader2,
   ShieldCheck,
   AlertCircle,
+  Table,
+  Trash2,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
-import { auditApi } from '@/lib/api'
+import { Button } from '@/components/ui/Button'
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card'
+import { Badge } from '@/components/ui/Badge'
+import { useImportPreview, useConfirmImport, useImports } from '@/hooks/useQorvi'
+import { formatCurrency, formatDate } from '@/lib/utils'
+import type { ImportPreview } from '@/types'
 
-type Stage = 'idle' | 'uploading' | 'analyzing' | 'complete' | 'error'
+const ACCEPTED_TYPES = { 'text/csv': ['.csv'] }
+const MAX_SIZE = 10 * 1024 * 1024
 
-const ACCEPTED_TYPES = {
-  'application/pdf': ['.pdf'],
-  'text/csv': ['.csv'],
-}
-
-const MAX_SIZE = 10 * 1024 * 1024 // 10MB
-
-interface UploadResponse {
-  auditId: string
-  message: string
-}
+type Stage = 'idle' | 'preview' | 'confirming' | 'complete' | 'error'
 
 export default function UploadPage() {
   const router = useRouter()
   const { getToken } = useAuth()
+  const preview = useImportPreview()
+  const confirmImport = useConfirmImport()
+  const { imports, refetch: refetchImports } = useImports()
+
   const [stage, setStage] = useState<Stage>('idle')
   const [file, setFile] = useState<File | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [abortController, setAbortController] = useState<AbortController | null>(null)
+  const [localPreview, setLocalPreview] = useState<ImportPreview | null>(null)
 
-  const onDrop = useCallback((acceptedFiles: File[], rejectedFiles: any[]) => {
+  const onDrop = useCallback((accepted: File[], rejected: any[]) => {
     setError(null)
-
-    if (rejectedFiles.length > 0) {
-      const rejection = rejectedFiles[0]
-      if (rejection.errors[0]?.code === 'file-too-large') {
-        setError('File is too large. Maximum size is 10MB.')
-      } else if (rejection.errors[0]?.code === 'file-invalid-type') {
-        setError('Only PDF and CSV files are accepted.')
-      } else {
-        setError('File could not be uploaded. Please try again.')
-      }
+    if (rejected.length) {
+      const r = rejected[0]
+      if (r.errors[0]?.code === 'file-too-large') setError('File is too large. Maximum 10MB.')
+      else if (r.errors[0]?.code === 'file-invalid-type') setError('Only CSV files are accepted.')
+      else setError('Could not accept this file.')
       return
     }
-
-    if (acceptedFiles.length > 0) {
-      setFile(acceptedFiles[0])
-    }
+    if (accepted.length) setFile(accepted[0])
   }, [])
 
-  const { getRootProps, getInputProps, isDragActive } = useDropzone({
+  const dropzone = useDropzone({
+    onDrop,
+    accept: ACCEPTED_TYPES,
+    maxFiles: 1,
+    maxSize: MAX_SIZE,
+  })
+  const { getRootProps, getInputProps, isDragActive } = dropzone
+  const {} = useDropzone({
     onDrop,
     accept: ACCEPTED_TYPES,
     maxFiles: 1,
@@ -67,46 +71,73 @@ export default function UploadPage() {
   const removeFile = () => {
     setFile(null)
     setError(null)
+    setLocalPreview(null)
     setStage('idle')
   }
 
-  const handleUpload = async () => {
+  const handlePreview = async () => {
     if (!file) return
-
-    try {
-      setStage('uploading')
-
-      const token = await getToken()
-      if (!token) {
-        throw new Error('You must be signed in to upload a statement.')
-      }
-
-      // Field name must match the backend's multer config exactly:
-      // upload.single('statement') in apps/api/src/routes/audit.ts
-      const formData = new FormData()
-      formData.append('statement', file)
-
-      const res = await auditApi.uploadStatement(formData, token)
-      const { auditId } = res.data as UploadResponse
-
-      // Backend returns 202 immediately and processes in the background —
-      // there's no "analyzing" step to await here, just a transition to
-      // let the user know it's underway before we redirect them to the
-      // audit page, which polls until it's actually complete.
-      setStage('analyzing')
-      toast.success('Statement uploaded. Analysis started.')
-
-      setStage('complete')
-      setTimeout(() => {
-        router.push(`/audit/${auditId}`)
-      }, 1200)
-    } catch (err) {
-      setStage('error')
-      const message =
-        err instanceof Error ? err.message : 'Something went wrong. Please try again.'
-      setError(message)
-      toast.error(message)
+    setStage('preview')
+    setError(null)
+    const formData = new FormData()
+    formData.append('file', file)
+    await preview.preview(formData)
+    if (preview.preview) {
+      setLocalPreview(preview.preview)
+      toast.success(`Preview ready — ${preview.preview.validRowCount} valid rows, ${preview.preview.invalidRowCount} skipped.`)
     }
+  }
+
+  const handleConfirm = async () => {
+    if (!localPreview || !file) return
+    setStage('confirming')
+    setError(null)
+    const controller = new AbortController()
+    setAbortController(controller)
+
+    const result = await confirmImport(
+      {
+        importId: 'pending',
+        originalFilename: file.name,
+        suggestedMapping: localPreview.suggestedMapping,
+        validRows: localPreview.validRows,
+        invalidRows: localPreview.invalidRows.map((r) => ({ rowIndex: r.rowIndex, reason: r.reason })),
+        chosenCurrency: 'NGN',
+      },
+      controller.signal
+    )
+
+    if (result.ok) {
+      setStage('complete')
+      toast.success('Import saved. You can now detect subscriptions.')
+      setTimeout(() => {
+        setFile(null)
+        setLocalPreview(null)
+        setStage('idle')
+        refetchImports()
+        router.push('/subscriptions')
+      }, 1400)
+    } else {
+      setError(result.error ?? 'Could not save import.')
+      toast.error(result.error ?? 'Could not save import.')
+      setStage('preview')
+    }
+  }
+
+  const handleCancel = async () => {
+    if (!localPreview) return
+    setStage('idle')
+    setLocalPreview(null)
+    setFile(null)
+    setError(null)
+    toast.success('Import cancelled. Nothing was saved.')
+  }
+
+  const cancelUpload = () => {
+    setFile(null)
+    setError(null)
+    setLocalPreview(null)
+    setStage('idle')
   }
 
   // Complete state
@@ -118,12 +149,8 @@ export default function UploadPage() {
             <CheckCircle2 size={40} className="text-emerald-400" />
           </div>
           <div>
-            <h2 className="font-display text-3xl font-bold text-white mb-2">
-              Upload received!
-            </h2>
-            <p className="text-gray-400">
-              Taking you to your audit...
-            </p>
+            <h2 className="font-display text-3xl font-bold text-white mb-2">Import saved</h2>
+            <p className="text-gray-400">Taking you to your subscriptions…</p>
           </div>
           <Loader2 size={20} className="animate-spin text-emerald-400" />
         </div>
@@ -132,29 +159,21 @@ export default function UploadPage() {
   }
 
   return (
-    <div className="max-w-2xl mx-auto space-y-8">
-
-      {/* Page header */}
+    <div className="max-w-4xl mx-auto space-y-8">
       <div>
-        <h1 className="font-display text-3xl font-bold text-white">
-          New Audit
-        </h1>
+        <h1 className="font-display text-3xl font-bold text-white">Import transactions</h1>
         <p className="text-gray-400 mt-1">
-          Upload your bank statement and we&apos;ll find every subscription in under 60 seconds.
+          Upload a CSV export from your bank. We validate it, show you a preview, and let you cancel before saving anything.
         </p>
       </div>
 
-      {/* How it works — mini steps */}
       <div className="grid grid-cols-3 gap-3">
         {[
-          { step: '1', text: 'Upload PDF or CSV' },
-          { step: '2', text: 'AI scans transactions' },
-          { step: '3', text: 'Get your report' },
+          { step: '1', text: 'Upload a CSV file' },
+          { step: '2', text: 'Preview columns & rows' },
+          { step: '3', text: 'Confirm or cancel' },
         ].map((item) => (
-          <div
-            key={item.step}
-            className="bg-gray-900 border border-white/5 rounded-xl p-4 text-center"
-          >
+          <div key={item.step} className="bg-gray-900 border border-white/5 rounded-xl p-4 text-center">
             <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-400 text-xs font-bold mb-2">
               {item.step}
             </span>
@@ -163,147 +182,165 @@ export default function UploadPage() {
         ))}
       </div>
 
-      {/* Drop zone */}
-      <div
-        {...getRootProps()}
-        className={cn(
-          'relative border-2 border-dashed rounded-2xl p-16 text-center cursor-pointer transition-all duration-200',
-          isDragActive
-            ? 'border-emerald-500 bg-emerald-500/10 scale-[1.02]'
-            : file
-              ? 'border-emerald-500/50 bg-emerald-500/5'
-              : error
-                ? 'border-rose-500/50 bg-rose-500/5'
-                : 'border-white/10 bg-white/2 hover:border-white/20 hover:bg-white/5'
-        )}
-      >
-        <input {...getInputProps()} />
+      {file && localPreview ? (
+        <Card className="border-emerald-500/20 bg-emerald-500/5">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <FileText size={18} className="text-emerald-400" />
+              Preview ready
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div>
+                <p className="text-white font-medium">{file.name}</p>
+                <p className="text-gray-500 text-sm mt-1">
+                  {(file.size / 1024 / 1024).toFixed(2)} MB · {localPreview.totalRows} rows
+                </p>
+              </div>
+              <Badge variant="success">{localPreview.validRowCount} valid</Badge>
+              <Badge variant="warning">{localPreview.invalidRowCount} skipped</Badge>
+            </div>
 
-        {file ? (
-          <div className="flex flex-col items-center gap-4">
-            <div className="w-16 h-16 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center">
-              <FileText size={32} className="text-emerald-400" />
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-gray-500 text-xs">Detected columns:</span>
+              {localPreview.headers.slice(0, 8).map((h) => (
+                <span key={h} className="px-2 py-1 rounded-md bg-white/5 border border-white/10 text-xs text-gray-300">
+                  {h}
+                </span>
+              ))}
+              {localPreview.headers.length > 8 && (
+                <span className="text-gray-500 text-xs">+{localPreview.headers.length - 8} more</span>
+              )}
             </div>
-            <div>
-              <p className="font-medium text-white text-lg">{file.name}</p>
-              <p className="text-gray-500 text-sm mt-1">
-                {(file.size / 1024 / 1024).toFixed(2)} MB ·{' '}
-                {file.type === 'application/pdf' ? 'PDF' : 'CSV'}
-              </p>
+
+            {localPreview.invalidRows.length > 0 && (
+              <div className="bg-rose-500/5 border border-rose-500/20 rounded-xl p-4">
+                <p className="text-rose-400 text-xs font-medium uppercase tracking-wide mb-2">
+                  Skipped rows
+                </p>
+                <ul className="space-y-1">
+                  {localPreview.invalidRows.slice(0, 10).map((r) => (
+                    <li key={r.rowIndex} className="text-gray-400 text-xs flex items-center gap-2">
+                      <span className="text-rose-500 font-medium">Row {r.rowIndex}:</span>
+                      {r.reason}
+                    </li>
+                  ))}
+                </ul>
+                {localPreview.invalidRows.length > 10 && (
+                  <p className="text-gray-500 text-xs mt-1">+{localPreview.invalidRows.length - 10} more skipped.</p>
+                )}
+              </div>
+            )}
+
+            <div className="flex items-center gap-3 pt-2 flex-wrap">
+              <Button onClick={handleConfirm} className="flex-1">
+                <CheckCircle2 size={16} />
+                Save import
+              </Button>
+              <Button variant="ghost" onClick={handleCancel}>
+                <X size={16} />
+                Cancel
+              </Button>
+              <Button variant="destructive" size="sm" onClick={cancelUpload}>
+                <Trash2 size={14} />
+                Remove file
+              </Button>
             </div>
-            <button
-              onClick={(e) => {
-                e.stopPropagation()
-                removeFile()
-              }}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white text-sm transition-all"
-            >
-              <X size={14} />
-              Remove file
-            </button>
+          </CardContent>
+        </Card>
+      ) : file && stage === 'preview' && !localPreview && preview.isLoading ? (
+        <div className="space-y-4">
+          <div className="flex items-center justify-center gap-3 py-6">
+            <Loader2 size={22} className="animate-spin text-emerald-400" />
+            <span className="text-gray-300 font-medium">Parsing CSV…</span>
           </div>
-        ) : isDragActive ? (
-          <div className="flex flex-col items-center gap-3">
-            <div className="w-16 h-16 rounded-2xl bg-emerald-500/20 flex items-center justify-center">
-              <Upload size={32} className="text-emerald-400 animate-bounce" />
+          {error && (
+            <div className="flex items-center gap-3 p-4 rounded-xl bg-rose-500/10 border border-rose-500/20">
+              <AlertCircle size={18} className="text-rose-400 shrink-0" />
+              <p className="text-rose-400 text-sm">{error}</p>
             </div>
-            <p className="text-emerald-400 font-medium text-lg">
-              Drop it here!
+          )}
+        </div>
+      ) : (
+        <div
+          {...getRootProps()}
+          className={cn(
+            'relative border-2 border-dashed rounded-2xl p-16 text-center cursor-pointer transition-all duration-200',
+            isDragActive
+              ? 'border-emerald-500 bg-emerald-500/10 scale-[1.02]'
+              : file
+                ? 'border-emerald-500/50 bg-emerald-500/5'
+                : error
+                  ? 'border-rose-500/50 bg-rose-500/5'
+                  : 'border-white/10 bg-white/2 hover:border-white/20 hover:bg-white/5'
+          )}
+        >
+          <input {...getInputProps()} />
+          {file ? (
+            <div className="flex flex-col items-center gap-4">
+              <div className="w-16 h-16 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center">
+                <FileText size={32} className="text-emerald-400" />
+              </div>
+              <div>
+                <p className="font-medium text-white text-lg">{file.name}</p>
+                <p className="text-gray-500 text-sm mt-1">
+                  {(file.size / 1024 / 1024).toFixed(2)} MB · CSV
+                </p>
+              </div>
+              <Button variant="ghost" onClick={(e) => { e.stopPropagation(); cancelUpload() }}>
+                <X size={14} />
+                Remove file
+              </Button>
+            </div>
+          ) : isDragActive ? (
+            <div className="flex flex-col items-center gap-3">
+              <div className="w-16 h-16 rounded-2xl bg-emerald-500/20 flex items-center justify-center">
+                <Upload size={32} className="text-emerald-400 animate-bounce" />
+              </div>
+              <p className="text-emerald-400 font-medium text-lg">Drop it here!</p>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center gap-4">
+              <div className="w-16 h-16 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center">
+                <Upload size={32} className="text-gray-500" />
+              </div>
+              <div>
+                <p className="text-white font-medium text-lg">Drop your statement here</p>
+                <p className="text-gray-500 text-sm mt-1">or click to browse your files</p>
+              </div>
+              <div className="flex items-center gap-3 text-gray-600 text-xs">
+                <span className="px-2 py-1 rounded-md bg-white/5 border border-white/10">CSV</span>
+                <span>Max 10MB</span>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {file && !localPreview && stage !== 'preview' && stage !== 'complete' && (
+        <div className="flex items-start gap-3 p-4 rounded-xl bg-white/3 border border-white/5">
+          <ShieldCheck size={18} className="text-emerald-400 shrink-0 mt-0.5" />
+          <div>
+            <p className="text-white text-sm font-medium">Preview before saving</p>
+            <p className="text-gray-500 text-xs mt-0.5 leading-relaxed">
+              Qorvi will show you the columns it detected and a preview of the rows. You can cancel at any point before saving.
             </p>
           </div>
-        ) : (
-          <div className="flex flex-col items-center gap-4">
-            <div className="w-16 h-16 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center">
-              <Upload size={32} className="text-gray-500" />
-            </div>
-            <div>
-              <p className="text-white font-medium text-lg">
-                Drop your statement here
-              </p>
-              <p className="text-gray-500 text-sm mt-1">
-                or click to browse your files
-              </p>
-            </div>
-            <div className="flex items-center gap-3 text-gray-600 text-xs">
-              <span className="px-2 py-1 rounded-md bg-white/5 border border-white/10">
-                PDF
-              </span>
-              <span className="px-2 py-1 rounded-md bg-white/5 border border-white/10">
-                CSV
-              </span>
-              <span>Max 10MB</span>
-            </div>
-          </div>
-        )}
-      </div>
+        </div>
+      )}
 
-      {/* Error message */}
+      {file && !localPreview && stage !== 'preview' && stage !== 'complete' && (
+        <Button onClick={handlePreview} className="w-full" disabled={preview.isLoading}>
+          <Table size={16} />
+          Preview import
+        </Button>
+      )}
+
       {error && (
         <div className="flex items-center gap-3 p-4 rounded-xl bg-rose-500/10 border border-rose-500/20">
           <AlertCircle size={18} className="text-rose-400 shrink-0" />
           <p className="text-rose-400 text-sm">{error}</p>
-        </div>
-      )}
-
-      {/* Upload button */}
-      {file && stage === 'idle' && (
-        <button
-          onClick={handleUpload}
-          className="w-full py-4 bg-emerald-500 hover:bg-emerald-400 text-gray-950 font-semibold rounded-xl transition-all duration-200 hover:scale-[1.01] text-lg"
-        >
-          Analyze my statement
-        </button>
-      )}
-
-      {/* Progress states */}
-      {(stage === 'uploading' || stage === 'analyzing') && (
-        <div className="space-y-4">
-          <div className="flex items-center justify-center gap-3 py-4">
-            <Loader2
-              size={22}
-              className="animate-spin text-emerald-400"
-            />
-            <span className="text-gray-300 font-medium">
-              {stage === 'uploading'
-                ? 'Uploading securely...'
-                : 'Starting AI analysis...'}
-            </span>
-          </div>
-
-          <div className="w-full bg-white/5 rounded-full h-1.5 overflow-hidden">
-            <div
-              className={cn(
-                'h-full bg-emerald-500 rounded-full transition-all duration-1000',
-                stage === 'uploading' ? 'w-1/3' : 'w-2/3'
-              )}
-            />
-          </div>
-
-          <p className="text-center text-gray-600 text-xs">
-            {stage === 'uploading'
-              ? 'Encrypting and uploading your file...'
-              : 'Your audit will keep processing in the background — you can watch it finish on the next screen.'}
-          </p>
-        </div>
-      )}
-
-      {/* Security note */}
-      {stage === 'idle' && (
-        <div className="flex items-start gap-3 p-4 rounded-xl bg-white/3 border border-white/5">
-          <ShieldCheck
-            size={18}
-            className="text-emerald-400 shrink-0 mt-0.5"
-          />
-          <div>
-            <p className="text-white text-sm font-medium">
-              Your data is safe
-            </p>
-            <p className="text-gray-500 text-xs mt-0.5 leading-relaxed">
-              Your statement is encrypted during upload and automatically
-              deleted from our servers after analysis. We never store your
-              raw bank data.
-            </p>
-          </div>
         </div>
       )}
     </div>

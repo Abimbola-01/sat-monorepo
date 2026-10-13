@@ -3,35 +3,46 @@ import express from 'express'
 import cors from 'cors'
 import helmet from 'helmet'
 import morgan from 'morgan'
-import { connectDB } from './config/database'
+import { connectDB, pool } from './config/database'
+import { runMigrations } from './db/runMigrations'
+import importsRouter from './routes/imports'
+import transactionsRouter from './routes/transactions'
+import subscriptionsRouter from './routes/subscriptions'
+import insightsRouter from './routes/insights'
+import dashboardRouter from './routes/dashboard'
+import settingsRouter from './routes/settings'
 import auditRouter from './routes/audit'
-import reportRouter from './routes/report'
-import { pool } from './config/database'
 import { requireAuth, AuthRequest } from './middleware/auth'
 
 const app = express()
 const PORT = process.env.PORT || 4000
 
-// ── Security middleware ───────────────────────────────────
-app.use(helmet())
-app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
-  credentials: true,
-}))
+// ── Security middleware ──────────────────────────────────────────────────
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+  })
+)
+app.use(
+  cors({
+    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+    credentials: true,
+  })
+)
 app.use(morgan('dev'))
 app.use(express.json({ limit: '10mb' }))
 app.use(express.urlencoded({ extended: true }))
 
-// ── Health check ──────────────────────────────────────────
-app.get('/health', (req, res) => {
+// ── Health check ─────────────────────────────────────────────────────────
+app.get('/health', (_req, res) => {
   res.json({
     status: 'ok',
-    message: 'SAT Backend is running',
+    message: 'Qorvi Backend is running',
     timestamp: new Date().toISOString(),
   })
 })
 
-app.get('/health/db', async (req, res) => {
+app.get('/health/db', async (_req, res) => {
   try {
     const result = await pool.query('SELECT NOW()')
     res.json({ status: 'ok', db_time: result.rows[0].now })
@@ -40,32 +51,38 @@ app.get('/health/db', async (req, res) => {
   }
 })
 
-// ── Routes ────────────────────────────────────────────────
+// ── Routes ───────────────────────────────────────────────────────────────
+app.use('/api/imports', importsRouter)
+app.use('/api/transactions', transactionsRouter)
+app.use('/api/subscriptions', subscriptionsRouter)
+app.use('/api/insights', insightsRouter)
+app.use('/api/dashboard', dashboardRouter)
+app.use('/api/settings', settingsRouter)
 app.use('/api/audit', auditRouter)
-app.use('/api/report', reportRouter)
 
 app.get('/api/me', requireAuth, (req: AuthRequest, res) => {
   res.json({ userId: req.userId, clerkId: req.clerkId })
 })
 
-// ── 404 handler ───────────────────────────────────────────
+// ── 404 handler ──────────────────────────────────────────────────────────
 app.use((req, res) => {
   res.status(404).json({ message: `Route ${req.path} not found` })
 })
 
-// ── Global error handler ──────────────────────────────────
-app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+// ── Global error handler ─────────────────────────────────────────────────
+app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error('Unhandled error:', err)
-  res.status(err.status || 500).json({
-    message: err.message || 'Internal server error',
+  res.status(500).json({
+    message: 'Internal server error',
   })
 })
 
-// ── Start server ──────────────────────────────────────────
+// ── Start server ─────────────────────────────────────────────────────────
 async function start() {
   await connectDB()
+  await runMigrations()
   app.listen(PORT, () => {
-    console.log(`SAT Backend running on http://localhost:${PORT}`)
+    console.log(`Qorvi Backend running on http://localhost:${PORT}`)
     console.log(`Health check: http://localhost:${PORT}/health`)
   })
 }

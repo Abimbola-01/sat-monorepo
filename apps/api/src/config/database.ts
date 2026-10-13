@@ -1,22 +1,6 @@
-// src/config/database.ts
-import 'dotenv/config'
-import { createClient } from '@supabase/supabase-js'
-import { Pool } from 'pg'
+import { pool } from '../db/pool'
 
-export const supabase = createClient(
-  process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_KEY!
-)
-
-export const pool = new Pool({
-  host: process.env.DB_HOST!,
-  port: Number(process.env.DB_PORT) || 6543,
-  database: process.env.DB_NAME || 'postgres',
-  user: process.env.DB_USER!,
-  password: process.env.DB_PASSWORD!,
-  ssl: { rejectUnauthorized: false },
-  max: 10,
-})
+export { pool }
 
 export async function connectDB() {
   try {

@@ -1,100 +1,72 @@
 'use client'
 import Link from 'next/link'
-import { motion } from 'framer-motion'
-import { ArrowRight, ShieldCheck, Zap } from 'lucide-react'
-
-const stats = [
-  { value: '₦2.4M+', label: 'saved by users' },
-  { value: '18,000+', label: 'audits completed' },
-  { value: '94%', label: 'found surprise charges' },
-]
+import { Receipt, ShieldCheck, ArrowRight } from 'lucide-react'
 
 export default function Hero() {
   return (
     <section className="relative min-h-screen flex items-center justify-center overflow-hidden bg-gray-950">
-      <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-[600px] h-[600px] bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
-      <div className="absolute bottom-0 right-0 w-[400px] h-[400px] bg-cyan-500/8 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[80vw] h-[50vh] bg-emerald-500/5 rounded-full blur-3xl pointer-events-none" />
 
-      <div className="relative z-10 max-w-5xl mx-auto px-6 text-center">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
-        >
-          <span className="inline-flex items-center gap-2 px-4 py-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 text-emerald-400 text-sm font-medium mb-8">
-            <Zap size={14} />
-            AI-powered subscription detection
-          </span>
-        </motion.div>
+      <div className="relative z-10 max-w-4xl mx-auto px-6 text-center pt-24 pb-20">
+        <span className="inline-flex items-center gap-2 px-4 py-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 text-emerald-400 text-sm font-medium mb-8">
+          <Receipt size={14} />
+          Subscription & recurring payment auditor
+        </span>
 
-        <motion.h1
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.1 }}
-          className="font-display text-5xl md:text-7xl font-bold text-white leading-tight mb-6"
-        >
-          Stop paying for{' '}
-          <span className="gradient-text">subscriptions</span>
-          <br />you forgot about
-        </motion.h1>
+        <h1 className="font-display text-5xl md:text-6xl font-bold text-white leading-tight mb-6 tracking-tight">
+          See More. Spend Less.
+        </h1>
 
-        <motion.p
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.2 }}
-          className="text-gray-400 text-xl md:text-2xl max-w-2xl mx-auto mb-10 leading-relaxed"
-        >
-          Upload your bank statement. SAT scans every transaction, finds
-          every recurring charge, and shows you exactly where your money
-          is going — in under 60 seconds.
-        </motion.p>
+        <p className="text-gray-300 text-xl md:text-2xl max-w-2xl mx-auto mb-10 leading-relaxed">
+          Find the subscriptions, recurring payments and forgotten expenses quietly
+          draining your money.
+        </p>
 
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.3 }}
-          className="flex flex-wrap justify-center gap-8 mb-12"
-        >
-          {stats.map((stat) => (
-            <div key={stat.label} className="text-center">
-              <p className="font-display text-3xl font-bold gradient-text">
-                {stat.value}
-              </p>
-              <p className="text-gray-500 text-sm mt-1">{stat.label}</p>
-            </div>
-          ))}
-        </motion.div>
-
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.4 }}
-          className="flex flex-col sm:flex-row gap-4 justify-center"
-        >
+        <div className="flex flex-col sm:flex-row gap-4 justify-center mb-12">
           <Link
             href="/sign-up"
-            className="inline-flex items-center justify-center gap-2 px-8 py-4 bg-emerald-500 hover:bg-emerald-400 text-gray-950 font-semibold rounded-xl transition-all duration-200 hover:scale-105 glow-emerald"
+            className="inline-flex items-center justify-center gap-2 px-8 py-4 bg-emerald-500 hover:bg-emerald-400 text-gray-950 font-semibold rounded-xl transition-all duration-200"
           >
-            Run your free audit
+            Start Auditing
             <ArrowRight size={18} />
           </Link>
           <Link
             href="#how-it-works"
-            className="inline-flex items-center justify-center gap-2 px-8 py-4 glass rounded-xl text-white hover:bg-white/10 transition-all duration-200"
+            className="inline-flex items-center justify-center gap-2 px-8 py-4 bg-white/5 hover:bg-white/10 text-white rounded-xl transition-all duration-200 border border-white/10"
           >
             <ShieldCheck size={18} className="text-emerald-400" />
-            See how it works
+            See How It Works
           </Link>
-        </motion.div>
+        </div>
 
-        <motion.p
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.5, delay: 0.6 }}
-          className="mt-8 text-gray-600 text-sm"
-        >
-          No credit card required · Bank-level encryption · Your data is never sold
-        </motion.p>
+        <p className="mt-8 text-gray-500 text-sm">
+          No credit card required to start. Your statements stay on your account.
+        </p>
+
+        <div className="mt-16 grid grid-cols-1 sm:grid-cols-3 gap-6 text-left">
+          {[
+            {
+              title: 'Upload your own data',
+              description:
+                'Export a transaction CSV from your bank and upload it. We never ask for bank logins.',
+            },
+            {
+              title: 'We find recurring charges',
+              description:
+                'Qorvi looks for payments that repeat with similar amounts and intervals, then groups them for you.',
+            },
+            {
+              title: 'You decide what to do',
+              description:
+                'Review detected subscriptions, see monthly and yearly costs, and spot ones you may have forgotten.',
+            },
+          ].map((item) => (
+            <div key={item.title} className="bg-white/3 border border-white/5 rounded-2xl p-6">
+              <h3 className="font-display text-white font-semibold text-base mb-2">{item.title}</h3>
+              <p className="text-gray-400 text-sm leading-relaxed">{item.description}</p>
+            </div>
+          ))}
+        </div>
       </div>
     </section>
   )

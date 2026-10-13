@@ -1,15 +1,15 @@
 'use client'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { useAuth, useUser, UserButton } from '@clerk/nextjs'
-import { BarChart2, Menu, X } from 'lucide-react'
+import { useAuth, UserButton } from '@clerk/nextjs'
+import { Receipt, Menu, X } from 'lucide-react'
 import { useState } from 'react'
 import { cn } from '@/lib/utils'
 
 const navLinks = [
   { href: '/#how-it-works', label: 'How it works' },
-  { href: '/pricing', label: 'Pricing' },
-  { href: '/about', label: 'About' },
+  { href: '/#privacy', label: 'Privacy' },
+  { href: '/faq', label: 'FAQ' },
 ]
 
 export default function Header() {
@@ -20,10 +20,11 @@ export default function Header() {
   return (
     <header className="fixed top-0 left-0 right-0 z-50 border-b border-white/5 bg-gray-950/80 backdrop-blur-md">
       <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
-
         <Link href="/" className="flex items-center gap-2">
-          <BarChart2 className="text-emerald-400" size={22} />
-          <span className="font-display font-bold text-white text-lg">SAT</span>
+          <Receipt className="text-emerald-400" size={22} />
+          <span className="font-display font-bold text-white text-lg tracking-tight">
+            Qorvi
+          </span>
         </Link>
 
         <nav className="hidden md:flex items-center gap-6">
@@ -33,9 +34,7 @@ export default function Header() {
               href={link.href}
               className={cn(
                 'text-sm transition-colors',
-                pathname === link.href
-                  ? 'text-white'
-                  : 'text-gray-400 hover:text-white'
+                pathname === link.href ? 'text-white' : 'text-gray-400 hover:text-white'
               )}
             >
               {link.label}
@@ -56,7 +55,7 @@ export default function Header() {
                 href="/sign-up"
                 className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-gray-950 font-semibold text-sm rounded-lg transition-all duration-200"
               >
-                Get started free
+                Start auditing
               </Link>
             </>
           ) : (
@@ -75,6 +74,7 @@ export default function Header() {
         <button
           className="md:hidden text-gray-400 hover:text-white"
           onClick={() => setMenuOpen(!menuOpen)}
+          aria-label={menuOpen ? 'Close menu' : 'Open menu'}
         >
           {menuOpen ? <X size={22} /> : <Menu size={22} />}
         </button>
@@ -95,17 +95,14 @@ export default function Header() {
           <div className="pt-4 border-t border-white/5 flex flex-col gap-3">
             {!isSignedIn ? (
               <>
-                <Link
-                  href="/sign-in"
-                  className="text-sm text-gray-400 hover:text-white"
-                >
+                <Link href="/sign-in" className="text-sm text-gray-400 hover:text-white">
                   Sign in
                 </Link>
                 <Link
                   href="/sign-up"
                   className="px-4 py-2 bg-emerald-500 text-gray-950 font-semibold text-sm rounded-lg text-center"
                 >
-                  Get started free
+                  Start auditing
                 </Link>
               </>
             ) : (

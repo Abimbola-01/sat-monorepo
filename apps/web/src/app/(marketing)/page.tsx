@@ -1,7 +1,8 @@
 import Hero from '@/components/landing/Hero'
 import HowItWorks from '@/components/landing/HowItWorks'
 import Features from '@/components/landing/Features'
-import Pricing from '@/components/landing/Pricing'
+import PrivacySection from '@/components/landing/PrivacySection'
+import FaqSection from '@/components/landing/FaqSection'
 import CTA from '@/components/landing/CTA'
 
 export default function LandingPage() {
@@ -10,7 +11,8 @@ export default function LandingPage() {
       <Hero />
       <HowItWorks />
       <Features />
-      <Pricing />
+      <PrivacySection />
+      <FaqSection />
       <CTA />
     </>
   )

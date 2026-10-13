@@ -6,7 +6,7 @@ import './globals.css'
 
 const inter = Inter({
   subsets: ['latin'],
-  variable: '--font-inter'
+  variable: '--font-inter',
 })
 
 const spaceGrotesk = Space_Grotesk({
@@ -15,12 +15,14 @@ const spaceGrotesk = Space_Grotesk({
 })
 
 export const metadata: Metadata = {
-  title: 'SAT — Subscription Audit Tool',
-  description: 'Find hidden subscriptions, stop wasting money. AI-powered bank statement analysis.',
-  keywords: ['subscription audit', 'bank statement analysis', 'save money', 'Nigeria'],
+  title: 'Qorvi — Subscription & recurring payment auditor',
+  description:
+    'Upload your bank statement and Qorvi helps you spot recurring payments, subscriptions, and forgotten expenses so you can decide what to keep.',
+  keywords: ['subscription audit', 'recurring payments', 'bank statement', 'personal finance'],
   openGraph: {
-    title: 'SAT — Subscription Audit Tool',
-    description: 'Find hidden subscriptions, stop wasting money.',
+    title: 'Qorvi — See More. Spend Less.',
+    description:
+      'Upload a bank statement and find the recurring charges quietly draining your money.',
     type: 'website',
   },
 }
@@ -49,10 +51,3 @@ export default function RootLayout({
     </ClerkProvider>
   )
 }
-
-<html
-  lang="en"
-  data-scroll-behavior="smooth"
-  className={`${inter.variable} ${spaceGrotesk.variable}`}
-  suppressHydrationWarning
-></html>

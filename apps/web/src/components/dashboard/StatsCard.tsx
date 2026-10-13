@@ -1,7 +1,7 @@
 import { LucideIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
-type StatVariant = 'success' | 'info' | 'warning' | 'danger'
+type StatVariant = 'success' | 'info' | 'warning' | 'danger' | 'neutral'
 
 interface StatsCardProps {
   label: string
@@ -9,6 +9,7 @@ interface StatsCardProps {
   trend?: string
   icon: LucideIcon
   variant?: StatVariant
+  onClick?: () => void
 }
 
 const variantStyles: Record<StatVariant, { text: string; bg: string; border: string }> = {
@@ -16,13 +17,17 @@ const variantStyles: Record<StatVariant, { text: string; bg: string; border: str
   info: { text: 'text-cyan-400', bg: 'bg-cyan-500/10', border: 'border-cyan-500/20' },
   warning: { text: 'text-amber-400', bg: 'bg-amber-500/10', border: 'border-amber-500/20' },
   danger: { text: 'text-rose-400', bg: 'bg-rose-500/10', border: 'border-rose-500/20' },
+  neutral: { text: 'text-gray-400', bg: 'bg-white/5', border: 'border-white/10' },
 }
 
-export function StatsCard({ label, value, trend, icon: Icon, variant = 'info' }: StatsCardProps) {
+export function StatsCard({ label, value, trend, icon: Icon, variant = 'info', onClick }: StatsCardProps) {
   const styles = variantStyles[variant]
 
   return (
-    <div className={cn('rounded-xl p-5 border', styles.bg, styles.border)}>
+    <div
+      className={cn('rounded-xl p-5 border cursor-pointer', styles.bg, styles.border, onClick && 'hover:bg-white/5 transition-colors')}
+      onClick={onClick}
+    >
       <div className="flex items-center justify-between mb-4">
         <span className="text-gray-400 text-sm">{label}</span>
         <div className={cn('w-8 h-8 rounded-lg flex items-center justify-center', styles.bg)}>

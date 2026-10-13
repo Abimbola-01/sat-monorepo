@@ -1,75 +1,56 @@
 'use client'
 
-import { useMemo, useState } from 'react'
-import type { AuditResult, Subscription } from '@/types'
-import { useAudits } from './useAudit'
+import { useMemo } from 'react'
+import type { Subscription } from '@/types'
+import { useTransactions, useSubscriptions as useQorviSubscriptions, useInsights } from './useQorvi'
 
 export interface SubscriptionStats {
   totalMonthlySpend: number
   potentialSavings: number
   activeCount: number
-  duplicateCount: number
-  unusedCount: number
+  reviewCount: number
 }
 
-type CategoryFilter = Subscription['category'] | 'all'
-
-/**
- * Derives the current subscription list and aggregate stats from the
- * user's most recent *completed* audit. There is no dedicated
- * subscriptions endpoint on the backend — this is intentional, since
- * subscriptions only exist in the context of an audit result.
- */
 export function useSubscriptions() {
-  const { audits, isLoading, error, refetch } = useAudits()
-  const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>('all')
-  const [showActiveOnly, setShowActiveOnly] = useState(false)
+  const { transactions, isLoading: txLoading } = useTransactions(200)
+  const { subscriptions, isLoading: subsLoading, error: subsError, refetch: refetchSubs } = useQorviSubscriptions()
+  const { insights, isLoading: insightsLoading } = useInsights()
 
-  const latestCompletedAudit = useMemo<AuditResult | null>(() => {
-    return audits.find((audit) => audit.status === 'complete') ?? null
-  }, [audits])
+  const isLoading = txLoading || subsLoading || insightsLoading
 
   const stats: SubscriptionStats = useMemo(() => {
-    if (!latestCompletedAudit) {
-      return {
-        totalMonthlySpend: 0,
-        potentialSavings: 0,
-        activeCount: 0,
-        duplicateCount: 0,
-        unusedCount: 0,
-      }
-    }
-
+    const activeCount = subscriptions.filter((s) => s.status === 'active').length
+    const reviewCount = subscriptions.filter((s) => s.status === 'needsReview').length
     return {
-      totalMonthlySpend: latestCompletedAudit.totalMonthlySpend,
-      potentialSavings: latestCompletedAudit.potentialSavings,
-      activeCount: latestCompletedAudit.subscriptions.filter((s) => s.active).length,
-      duplicateCount: latestCompletedAudit.duplicates.length,
-      unusedCount: latestCompletedAudit.unusedCount,
+      totalMonthlySpend: insights?.totalMonthlyAmount ?? subscriptions.reduce((s, x) => s + x.monthlyAmount, 0),
+      potentialSavings: insights?.potentialMonthlySavings ?? subscriptions.reduce((s, x) => s + x.monthlyAmount, 0),
+      activeCount,
+      reviewCount,
     }
-  }, [latestCompletedAudit])
+  }, [subscriptions, insights])
 
-  const subscriptions = useMemo<Subscription[]>(() => {
-    if (!latestCompletedAudit) return []
-
-    return latestCompletedAudit.subscriptions.filter((sub) => {
-      if (showActiveOnly && !sub.active) return false
-      if (categoryFilter !== 'all' && sub.category !== categoryFilter) return false
-      return true
+  const subscriptionsFiltered = useMemo(() => {
+    return subscriptions.slice().sort((a, b) => {
+      const rank: Record<string, number> = { high: 3, medium: 2, low: 1 }
+      const aRank = rank[getConfidenceLabel(a.confidenceScore)] || 0
+      const bRank = rank[getConfidenceLabel(b.confidenceScore)] || 0
+      return (bRank - aRank) || b.monthlyAmount - a.monthlyAmount
     })
-  }, [latestCompletedAudit, categoryFilter, showActiveOnly])
+  }, [subscriptions])
 
   return {
-    subscriptions,
-    duplicates: latestCompletedAudit?.duplicates ?? [],
+    subscriptions: subscriptionsFiltered,
+    duplicates: [],
     stats,
     isLoading,
-    error,
-    refetch,
-    categoryFilter,
-    setCategoryFilter,
-    showActiveOnly,
-    setShowActiveOnly,
-    hasAudit: latestCompletedAudit !== null,
+    error: subsError,
+    refetch: refetchSubs,
+    hasData: subscriptions.length > 0 || transactions.length > 0,
   }
+}
+
+function getConfidenceLabel(score: number): string {
+  if (score >= 70) return 'high'
+  if (score >= 45) return 'medium'
+  return 'low'
 }
